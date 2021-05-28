@@ -37,6 +37,7 @@
   <script>
     
     window.base_url = "http://agp-api.agrosfer.org/";
+    window.bearer = 'Bearer 86|QTyUVkGOuxl0GZ1Mfa3oRHqune3IithRXlXwYU6o';
     //window.base_url = "http://api.agrosfer.test/";
 
     var survey = "agrosurvey/surveys?with=questions";
@@ -77,7 +78,7 @@
                         type: 'get',
                         dataType: 'json',
                         headers: {
-                            'Authorization':'Bearer 86|QTyUVkGOuxl0GZ1Mfa3oRHqune3IithRXlXwYU6o',
+                            'Authorization': bearer,
                             //'X-CSRF-TOKEN':'xxxxxxxxxxxxxxxxxxxx',
                             'Content-Type':'application/json'
                         },
@@ -313,7 +314,7 @@
                 dataType: 'json',
                 data: sync,
                 headers: {
-                    'Authorization':'Bearer 58|GP7uIe3ix5M0V7OKDPpmAIGyA8KBBYNb7bXm4eVU',
+                    'Authorization': bearer,
                     //'X-CSRF-TOKEN':'xxxxxxxxxxxxxxxxxxxx',
                     'Content-Type':'application/json'
                 },
@@ -325,7 +326,9 @@
                     // Resolving Promise will launch then() below.
                 // resolve(data);
                 }
-            });                      
+            });   
+
+            alert("Successfully Uploaded");                   
         }
 
         prepareUpload ();

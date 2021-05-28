@@ -1,0 +1,281 @@
+<!doctype html>
+<html>
+  <head>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-+0n0xVW2eSR5OomGNYDnhzAbDsOXxcvSN1TPprVMTNDbiYZCxYbOOl7+AMvyTG2x" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js" integrity="sha384-gtEjrD/SeCtmISkJkNUaaKMoLD0//ElJ19smozuHV6z3Iehds+3Ulb9Bn9Plx0x4" crossorigin="anonymous"></script>
+      <!-- Include Dexie -->
+      <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
+      <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+    
+  </head>
+
+  <body class="container">
+        <h1>Surveys</h1>
+        <ul id="survey-list" class="list-group">
+        </ul>    
+
+        <button id="upload" type="button" class="btn btn-primary mt-3">Upload</button>
+  </body>
+
+  <script>
+    
+    var base_url = "http://agp-api.agrosfer.org/";
+
+    var survey = "agrosurvey/surveys?with=questions";
+
+    var feedback_save = "agrosurvey/feedbacks";
+
+    var url = base_url + survey;
+
+    var db = new Dexie('Agrosurvey');
+
+
+    db.version(1).stores({
+            surveys: "id,title,organisation_id,gist,sequence,created_at,updated_at,deleted_at,survey_localization,questions_count,all_questions_count",
+            questions: "id,title,survey_id,question_type_id,audio_file,label,full_titlesequence,display_question,parent_question_id,is_mandatory,variable_label,decimal_place,map_accuracy,survey_section_id,created_at,updated_at,deleted_at,question_localization",
+            options: "id,text,question_id,is_other_option,sequence,created_at,updated_at,deleted_at,option_localization, audio_file",
+            feedbacks: "++id,device_feedback_id,survey_id,start_timestamp,end_timestamp,start_location,end_location",
+            question_feedbacks: "++id,feedback_id,survey_id,question_id,question_type_slug,*options,response_text,remarks,acres,gps"
+        });
+
+    // Populate from AJAX:
+    db.on('ready', function () {
+        // on('ready') event will fire when database is open but 
+        // before any other queued operations start executing.
+        // By returning a Promise from this event,
+        // the framework will wait until promise completes before
+        // resuming any queued database operations.
+        // Let's start by using the count() method to detect if 
+        // database has already been populated.
+        return db.surveys.count(function (count) {
+            if (count > 0) {
+            console.log("Already populated");
+        } else {
+            console.log("Populating from ajax call...");
+            // We want framework to continue waiting, so we encapsulate
+            // the ajax call in a Promise that we return here.
+            return new Promise(function (resolve, reject) {
+                $.ajax(url, {
+                    type: 'get',
+                    dataType: 'json',
+                    headers: {
+                        'Authorization':'Bearer 58|GP7uIe3ix5M0V7OKDPpmAIGyA8KBBYNb7bXm4eVU',
+                        //'X-CSRF-TOKEN':'xxxxxxxxxxxxxxxxxxxx',
+                        'Content-Type':'application/json'
+                    },
+                    error: function (xhr, textStatus) {
+                        // Rejecting promise to make db.open() fail.
+                        reject(textStatus);
+                    },
+                    success: function (data) {
+                        // Resolving Promise will launch then() below.
+                        resolve(data);
+                    }
+                });
+            }).then(function (data) {
+                console.log("Got ajax response. We'll now add the objects.");
+                // By returning the a promise, framework will keep
+                // waiting for this promise to complete before resuming other
+                // db-operations.
+                console.log("Calling bulkPut() to insert objects...");
+
+                db.surveys.bulkPut(data);
+
+                for (var survey in data) {
+                    questions = data[survey].questions;
+                    db.questions.bulkPut(questions);
+                    //console.log("Found question object: " + JSON.stringify(questions);
+
+                    for (var option in questions) {
+                        db.options.bulkPut(questions[option].options);
+                        //console.log("Found question object: " + JSON.stringify(questions[option].options));
+                    }                        
+                }
+            
+                return true;
+            }).then(function () {
+                console.log ("Done populating.");
+            });
+        }
+
+        });
+    });
+
+    
+    // Following operation will be queued until we're finished populating data:
+    db.transaction('r', db.surveys, db.feedbacks, async ()=>{
+        // When we come here, data is fully populated and we can log all objects.
+        db.surveys.each(function (obj) {
+        
+            var ul = document.querySelector("#survey-list");
+            db.feedbacks.where("survey_id").equals(obj.id).count().then(function(feedback){
+                
+                survey_item = "<a href='/surveys.html?survey_id=" + obj.id + "&survey_title=" + obj.title + "'>" + obj.title+ " (Total Questions:" + obj.all_questions_count + " Total Feedbacks: " + feedback+")</a>"
+                var li = document.createElement("li");
+                    li.innerHTML  = survey_item; 
+                    li.className = "list-group-item";
+
+                ul.appendChild(li);
+            }).catch(function (error) {
+                // In our each() callback above fails, OR db.open() fails due to any reason,
+                // including our ajax call failed, this operation will fail and we will get
+                // the error here!
+                console.error(error.stack || error);
+                // Note that we could also have catched it on db.open() but in this sample,
+                // we show it here.
+            });
+
+        }).then(function () {
+
+            console.log("Finished.");
+        }).catch(function (error) {
+            // In our each() callback above fails, OR db.open() fails due to any reason,
+            // including our ajax call failed, this operation will fail and we will get
+            // the error here!
+            console.error(error.stack || error);
+            // Note that we could also have catched it on db.open() but in this sample,
+            // we show it here.
+        });  
+
+    })
+
+    document.getElementById("upload").addEventListener("click", function() {
+
+        var url = base_url + feedback_save;
+
+        var surveys = [];
+
+        async function prepareUpload (){
+
+            console.log('preparing upload');
+
+            db.transaction('r', db.surveys, db.feedbacks, db.question_feedbacks, async ()=> { 
+                surveys = [];
+                let qsurveys = await db.surveys.toArray();
+
+                qsurveys.map(async survey => {
+
+                    qfeedbacks = await db.feedbacks
+                    .where('survey_id').equals(survey.id).toArray()
+
+                    var feedbacks = [];
+
+                    qfeedbacks.map(async feedback => {
+
+                        var question_feedbacks = [];
+
+                        await db.question_feedbacks
+                            .where('feedback_id').equals(feedback.id).each(function(question_feedback){
+
+                                question_feedbacks.push({
+                                    question_id: question_feedback.question_id,
+                                    question_type_slug: question_feedback.question_type_slug,
+                                    options : question_feedback.options,
+                                    remarks: question_feedback.remarks,  
+                                    response_text: question_feedback.response_text                            
+                                });   
+                    
+                        })
+
+                        feedbacks.push({
+                            localization: "fr_Fr",
+                            start_timestamp: feedback.start_timestamp,
+                            end_timestamp: feedback.end_timestamp, 
+                            start_location: feedback.start_location,
+                            end_location: feedback.end_location, 
+                            device_feedback_id: feedback.device_feedback_id,                           
+                            question_feedbacks : question_feedbacks
+                        });
+
+                        console.log("question_feedbacks");
+                        console.log(question_feedbacks);
+
+                    })  
+
+                    surveys.push({
+                        survey_id: survey.id,
+                        feedbacks: feedbacks
+                    })
+                    
+                    console.log("feedbacks");
+                    console.log(feedbacks);
+
+                }) 
+
+                console.log("surveys");
+                console.log(surveys);
+
+                        
+                return surveys;
+ 
+            }).then(result => {
+
+                //console.table(result);
+                postUpload(result);
+            }).catch(function (error) {
+            // In our each() callback above fails, OR db.open() fails due to any reason,
+            // including our ajax call failed, this operation will fail and we will get
+            // the error here!
+            console.error(error.stack || error);
+            // Note that we could also have catched it on db.open() but in this sample,
+            // we show it here.
+            }); 
+                  
+            console.log("Uploading.");
+
+        }
+        
+
+        async function postUpload(survey){
+
+            var sync = {
+
+                device_uid: "2",
+                device_model: "Nokia A7 2021",
+                os_version: "1.21",
+                fcm_code: "357811080994972",
+                app_version: "2.1",
+                android_version: "1.21",
+                surveys: surveys
+            }
+
+            console.log(sync); 
+
+            sync = JSON.stringify(sync, function replacer(key, value) {
+                //alert(`${key}: ${value}`);
+                return value;
+            });
+
+            console.log(sync); 
+
+
+            $.ajax(url, {
+                type: 'POST',
+                dataType: 'json',
+                data: sync,
+                headers: {
+                    'Authorization':'Bearer 58|GP7uIe3ix5M0V7OKDPpmAIGyA8KBBYNb7bXm4eVU',
+                    //'X-CSRF-TOKEN':'xxxxxxxxxxxxxxxxxxxx',
+                    'Content-Type':'application/json'
+                },
+                error: function (xhr, textStatus) {
+                    // Rejecting promise to make db.open() fail.
+                    //reject(textStatus);
+                },
+                success: function (data) {
+                    // Resolving Promise will launch then() below.
+                // resolve(data);
+                }
+            });                      
+        }
+
+        prepareUpload ();
+
+
+
+    });
+    
+
+  </script>
+
+</html>

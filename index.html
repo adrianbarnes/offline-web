@@ -10,16 +10,34 @@
   </head>
 
   <body class="container">
-        <h1>Surveys</h1>
-        <ul id="survey-list" class="list-group">
-        </ul>    
+        <div id="preview" class="preview">
+            <h1>Surveys</h1>
+            <ul id="survey-list" class="list-group">
+            </ul>    
+    
+            <button id="upload" type="button" class="btn btn-primary mt-3">Upload</button>
+    
+        </div>
 
-        <button id="upload" type="button" class="btn btn-primary mt-3">Upload</button>
+        <div id="fill" class="fill d-none">
+            <a onclick="BackToSurveys()" class="btn btn-primary">Back</a>
+
+            <h1><span id="survey-title"></span> Questions</h1>
+            <form>
+                <ul id="question-list" class="list-group">
+                </ul>
+            </form>
+    
+            <button id="submit" type="button" class="btn btn-primary mt-3">Save</button>
+        </div>
+
+
   </body>
 
   <script>
     
-    var base_url = "http://agp-api.agrosfer.org/";
+    window.base_url = "http://agp-api.agrosfer.org/";
+    window.base_url = "http://api.agrosfer.test/";
 
     var survey = "agrosurvey/surveys?with=questions";
 
@@ -27,7 +45,134 @@
 
     var url = base_url + survey;
 
-    var db = new Dexie('Agrosurvey');
+
+    window.ChangeHref = function (url, title = "Question"){
+        window.history.pushState({page: "surveys"}, title , url );
+        document.getElementById("fill").classList.remove("d-none");
+        document.getElementById("preview").classList.add("d-none");
+
+        loadQuestions()
+    }
+
+    window.BackToSurveys = function (url, title = "Surveys"){
+        window.history.pushState({page: "surveys"}, title , "" );
+        document.getElementById("fill").classList.add("d-none");
+        document.getElementById("preview").classList.remove("d-none");
+
+        loadSurveys();
+    }    
+
+
+
+    window.loadSurveys = function(){
+        return db.surveys.count(function (count) {
+            if (count > 0) {
+            console.log("Already populated");
+            } else {
+                console.log("Populating from ajax call...");
+                // We want framework to continue waiting, so we encapsulate
+                // the ajax call in a Promise that we return here.
+                return new Promise(function (resolve, reject) {
+                    $.ajax(url, {
+                        type: 'get',
+                        dataType: 'json',
+                        headers: {
+                            'Authorization':'Bearer 86|QTyUVkGOuxl0GZ1Mfa3oRHqune3IithRXlXwYU6o',
+                            //'X-CSRF-TOKEN':'xxxxxxxxxxxxxxxxxxxx',
+                            'Content-Type':'application/json'
+                        },
+                        error: function (xhr, textStatus) {
+                            // Rejecting promise to make db.open() fail.
+                            reject(textStatus);
+                        },
+                        success: function (data) {
+                            // Resolving Promise will launch then() below.
+                            resolve(data);
+                        }
+                    });
+                }).then(function (data) {
+                    console.log("Got ajax response. We'll now add the objects.");
+                    // By returning the a promise, framework will keep
+                    // waiting for this promise to complete before resuming other
+                    // db-operations.
+                    console.log("Calling bulkPut() to insert objects...");
+
+                    db.surveys.bulkPut(data);
+
+                    for (var survey in data) {
+                        questions = data[survey].questions;
+                        db.questions.bulkPut(questions);
+                        //console.log("Found question object: " + JSON.stringify(questions);
+
+                        for (var option in questions) {
+                            db.options.bulkPut(questions[option].options);
+                            //console.log("Found question object: " + JSON.stringify(questions[option].options));
+                        }                        
+                    }
+                
+                    return true;
+                }).then(function () {
+                    console.log ("Done populating.");
+                });
+            }
+
+        }).then(update_survey_display());    
+        
+        
+    }
+
+    update_survey_display = function(){
+    // Following operation will be queued until we're finished populating data:
+    db.transaction('r', db.surveys, db.feedbacks, async ()=>{
+        // When we come here, data is fully populated and we can log all objects.
+        var ul = document.querySelector("#survey-list");
+
+        ul.innerHTML = "";
+        db.surveys.each(function (obj) {
+        
+
+
+            db.feedbacks.where("survey_id").equals(obj.id).count().then(function(feedback){
+                question_url = encodeURI('surveys.html?survey_id=' + obj.id + '&survey_title=' + obj.title);
+                
+                survey_item = "<a class='survey-items' href='"+ question_url +"'>" + obj.title+ " (Total Questions:" + obj.all_questions_count + " Total Feedbacks: " + feedback+")</a>"
+                var li = document.createElement("li");
+                    li.innerHTML  = survey_item; 
+                    li.className = "list-group-item";
+
+                ul.appendChild(li);
+            }).catch(function (error) {
+                // In our each() callback above fails, OR db.open() fails due to any reason,
+                // including our ajax call failed, this operation will fail and we will get
+                // the error here!
+                console.error(error.stack || error);
+                // Note that we could also have catched it on db.open() but in this sample,
+                // we show it here.
+            });
+
+        }).then(function () {
+            var anchors = document.getElementsByClassName('survey-items');
+            
+                for(i=0, len=anchors.length; i<len; i++){
+                    anchors[i].addEventListener('click', function(e){
+                        e.preventDefault();
+                        ChangeHref(e.target.href)
+                    });
+                }
+            console.log("Finished.");
+        }).catch(function (error) {
+            // In our each() callback above fails, OR db.open() fails due to any reason,
+            // including our ajax call failed, this operation will fail and we will get
+            // the error here!
+            console.error(error.stack || error);
+            // Note that we could also have catched it on db.open() but in this sample,
+            // we show it here.
+        });  
+
+    })        
+    }
+
+    window.db = new Dexie('Agrosurvey');
 
 
     db.version(1).stores({
@@ -47,97 +192,10 @@
         // resuming any queued database operations.
         // Let's start by using the count() method to detect if 
         // database has already been populated.
-        return db.surveys.count(function (count) {
-            if (count > 0) {
-            console.log("Already populated");
-        } else {
-            console.log("Populating from ajax call...");
-            // We want framework to continue waiting, so we encapsulate
-            // the ajax call in a Promise that we return here.
-            return new Promise(function (resolve, reject) {
-                $.ajax(url, {
-                    type: 'get',
-                    dataType: 'json',
-                    headers: {
-                        'Authorization':'Bearer 86|QTyUVkGOuxl0GZ1Mfa3oRHqune3IithRXlXwYU6o',
-                        //'X-CSRF-TOKEN':'xxxxxxxxxxxxxxxxxxxx',
-                        'Content-Type':'application/json'
-                    },
-                    error: function (xhr, textStatus) {
-                        // Rejecting promise to make db.open() fail.
-                        reject(textStatus);
-                    },
-                    success: function (data) {
-                        // Resolving Promise will launch then() below.
-                        resolve(data);
-                    }
-                });
-            }).then(function (data) {
-                console.log("Got ajax response. We'll now add the objects.");
-                // By returning the a promise, framework will keep
-                // waiting for this promise to complete before resuming other
-                // db-operations.
-                console.log("Calling bulkPut() to insert objects...");
-
-                db.surveys.bulkPut(data);
-
-                for (var survey in data) {
-                    questions = data[survey].questions;
-                    db.questions.bulkPut(questions);
-                    //console.log("Found question object: " + JSON.stringify(questions);
-
-                    for (var option in questions) {
-                        db.options.bulkPut(questions[option].options);
-                        //console.log("Found question object: " + JSON.stringify(questions[option].options));
-                    }                        
-                }
-            
-                return true;
-            }).then(function () {
-                console.log ("Done populating.");
-            });
-        }
-
-        });
+        loadSurveys();
     });
 
-    
-    // Following operation will be queued until we're finished populating data:
-    db.transaction('r', db.surveys, db.feedbacks, async ()=>{
-        // When we come here, data is fully populated and we can log all objects.
-        db.surveys.each(function (obj) {
-        
-            var ul = document.querySelector("#survey-list");
-            db.feedbacks.where("survey_id").equals(obj.id).count().then(function(feedback){
-                
-                survey_item = "<a href='/surveys.html?survey_id=" + obj.id + "&survey_title=" + obj.title + "'>" + obj.title+ " (Total Questions:" + obj.all_questions_count + " Total Feedbacks: " + feedback+")</a>"
-                var li = document.createElement("li");
-                    li.innerHTML  = survey_item; 
-                    li.className = "list-group-item";
 
-                ul.appendChild(li);
-            }).catch(function (error) {
-                // In our each() callback above fails, OR db.open() fails due to any reason,
-                // including our ajax call failed, this operation will fail and we will get
-                // the error here!
-                console.error(error.stack || error);
-                // Note that we could also have catched it on db.open() but in this sample,
-                // we show it here.
-            });
-
-        }).then(function () {
-
-            console.log("Finished.");
-        }).catch(function (error) {
-            // In our each() callback above fails, OR db.open() fails due to any reason,
-            // including our ajax call failed, this operation will fail and we will get
-            // the error here!
-            console.error(error.stack || error);
-            // Note that we could also have catched it on db.open() but in this sample,
-            // we show it here.
-        });  
-
-    })
 
     document.getElementById("upload").addEventListener("click", function() {
 
@@ -271,11 +329,326 @@
 
         prepareUpload ();
 
-
-
     });
     
 
   </script>
+        <script>
+            function getParameterByName(name, url = window.location.href) {
+                name = name.replace(/[\[\]]/g, '\\$&');
+                var regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)'),
+                    results = regex.exec(url);
+                if (!results) return null;
+                if (!results[2]) return '';
+                return decodeURIComponent(results[2].replace(/\+/g, ' '));
+            }
+    
+            var url = base_url + survey;
+    
+            // // Open the database
+            db.open()
+            .then()
+            .catch(function (error) {
+                // In our each() callback above fails, OR db.open() fails due to any reason,
+                // including our ajax call failed, this operation will fail and we will get
+                // the error here!
+                console.error(error.stack || error);
+                // Note that we could also have catched it on db.open() but in this sample,
+                // we show it here.
+            });
+            var survey_id;
+            var survey_title
 
+            window.loadQuestions = function(){
+
+                survey_id = String(getParameterByName('survey_id'));
+                survey_title = String(getParameterByName('survey_title'));
+
+                document.getElementById("survey-title").textContent = survey_title
+                var ul = document.querySelector("#question-list");
+
+                ul.innerHTML = "";
+        
+                db.questions.where('survey_id').equals(survey_id).each(function (obj) {
+                    // When we come here, data is fully populated and we can log all objects.
+                    
+                    question_item = "<p>"+ obj.full_title +"</p>";
+        
+                    //console.log("Found question object: " + JSON.stringify(obj));
+        
+                    question_item  += inputType(obj.id, obj.question_type_id, obj.options);
+                    
+                    var li = document.createElement("li");
+                        li.innerHTML  = question_item;
+                        li.className = "list-group-item";
+        
+                    ul.appendChild(li);
+        
+                }).then(function () {
+        
+                    console.log("Finished.");
+                }).catch(function (error) {
+                    // In our each() callback above fails, OR db.open() fails due to any reason,
+                    // including our ajax call failed, this operation will fail and we will get
+                    // the error here!
+                    console.error(error.stack || error);
+                    // Note that we could also have catched it on db.open() but in this sample,
+                    // we show it here.
+                });
+            }
+    
+
+    
+            function inputType(question_id,question_type_id, options){
+                feedbackInput = '';
+    
+                switch (question_type_id) {
+                    case 3:
+    
+                        for (var option in options) {
+                            feedbackInput += "<input class='form-check-input' data-question="+ question_id + " id='q_"+ question_id +"_opt_" + options[option].id +"' type='checkbox' name="+ question_id +" value="+ options[option].id +"><label for='q_"+ question_id +"_opt_" + options[option].id +"'>" + options[option].text + "</label>";
+                        }   
+    
+                        break;
+                    case 2:
+    
+                        for (var option in options) {
+                            feedbackInput += "<input class='form-check-input' data-question="+ question_id + " id='q_"+ question_id +"_opt_" + options[option].id +"' type='radio' name="+ question_id +" value="+ options[option].id +"><label for='q_"+ question_id +"_opt_" + options[option].id +"'>" + options[option].text + "</label>";
+                        }   
+    
+                        break;
+    
+                    case 1:
+    
+                        feedbackInput = "<select class='form-control' data-question="+ question_id + " id='q_"+ question_id +"' name="+ question_id +">";
+    
+                            for (var option in options) {
+                                feedbackInput += "<option  value='"+ options[option].id + "'>" + options[option].text + "<option>";
+    
+                            }   
+    
+                        feedbackInput += "</select>";
+                        break;                
+                
+                    default:
+                            feedbackInput = "<input class='form-control' data-question="+ question_id + " id='q_"+ question_id +"' type='text' name="+ question_id +">";
+                        break;
+                }
+    
+    
+                return feedbackInput;
+            }
+            
+            var serializeArray = function (form,feedback) {
+
+                db.transaction('rw', db.questions, db.question_feedbacks, async ()=>{
+                    db.questions.where('survey_id').equals(feedback.survey_id).each(function(question){
+                    var serialized = [];
+                    // Loop through each field in the form
+
+                    
+                    console.log(question.question_type_slug );
+                    if(question.question_type_slug == 'radio_button' || question.question_type_slug == 'check_box'){
+                        var fields = document.querySelectorAll("[data-question='"+ question.id + "']");
+
+                        for (var i = 0; i < fields.length; i++) {
+
+                            var field = fields[i];
+
+                            console.log(field);
+
+                            if(field.checked){
+
+                                serialized = {
+                                    survey_id : survey_id,
+                                    question_id: question.id,
+                                    feedback_id : feedback.id,
+                                    question_type_slug : question.question_type_slug,
+                                    options: [
+                                        {
+                                            option_id: field.value,
+                                            response_text: document.querySelector('label[for='+field.id+']').textContent
+                                        }
+                                    ],  
+                                    remarks: null
+                                };
+
+                                console.log("serialized");
+                                console.log(serialized);
+
+                                db.question_feedbacks.add(serialized).catch(function (error) {
+                                    // In our each() callback above fails, OR db.open() fails due to any reason,
+                                    // including our ajax call failed, this operation will fail and we will get
+                                    // the error here!
+                                    console.error(error.stack || error);
+                                    // Note that we could also have catched it on db.open() but in this sample,
+                                    // we show it here.
+                                }); 
+                            }
+
+                       
+                        }
+
+                    }else{
+
+                        var field = document.querySelector('#q_'+ question.id);
+                        // If a multi-select, get all selections
+                        if (field.type === 'select-multiple') {
+
+                            for (var n = 0; n < field.options.length; n++) {
+                                if (!field.options[n].selected) continue;
+                                serialized = serialized.push({
+                                    survey_id : survey_id,
+                                    question_id: question.id,
+                                    feedback_id : feedback.id,
+                                    remarks: "",
+                                    response_text: field.options[n].text,
+                                    options: field.options[n].value,
+                                    question_type_slug : question.question_type_slug,
+                                });
+                            }
+
+
+                            }
+                            else if (field.type === 'select-one') {
+
+                            serialized = {
+                            survey_id : survey_id,
+                            question_id: question.id,
+                            feedback_id : feedback.id,
+                            options: [
+                                {
+                                    option_id: field.options[field.selectedIndex].value,
+                                    response_text: field.options[field.selectedIndex].text
+                                }
+                            ],                            
+                            remarks: null,
+                            question_type_slug : question.question_type_slug,
+                            };
+
+                            db.question_feedbacks.add(serialized).catch(function (error) {
+                            // In our each() callback above fails, OR db.open() fails due to any reason,
+                            // including our ajax call failed, this operation will fail and we will get
+                            // the error here!
+                            console.error(error.stack || error);
+                            // Note that we could also have catched it on db.open() but in this sample,
+                            // we show it here.
+                            }); 
+
+
+                            }                   
+                            // Convert field data to a query string
+                            else if ((field.type !== 'checkbox' && field.type !== 'radio') || field.checked) {
+                            if(field.value !== ""){
+                                serialized = {
+                                    survey_id : survey_id,
+                                    question_id: question.id,
+                                    response_text: field.value,
+                                    feedback_id : feedback.id,
+                                    question_type_slug : question.question_type_slug,
+                                    remarks: null,
+                                    acres: null,
+                                    gps: null,
+                                };
+
+                                // console.log("serialized");
+                                // console.log(serialized);
+
+                                db.question_feedbacks.add(serialized).catch(function (error) {
+                                    // In our each() callback above fails, OR db.open() fails due to any reason,
+                                    // including our ajax call failed, this operation will fail and we will get
+                                    // the error here!
+                                    console.error(error.stack || error);
+                                    // Note that we could also have catched it on db.open() but in this sample,
+                                    // we show it here.
+                                });
+                            }
+
+                        }
+
+                    }
+
+
+                }).then(function () {
+
+                    console.log("Finished.");
+                }).catch(function (error) {
+                    // In our each() callback above fails, OR db.open() fails due to any reason,
+                    // including our ajax call failed, this operation will fail and we will get
+                    // the error here!
+                    console.error(error.stack || error);
+                    // Note that we could also have catched it on db.open() but in this sample,
+                    // we show it here.
+                });
+
+                })               
+            };    
+            
+
+            var start_timestamp = String(Date.now());
+
+            var start_location = {
+                "longitude": -2.65214552,
+                "latitude": 5.67770594
+            }
+
+            document.getElementById("submit").addEventListener("click", function() {
+                var feedback = { 
+                    device_feedback_id : String(Date.now()) ,
+                    survey_id : survey_id,
+                    start_timestamp : start_timestamp ,
+                    end_timestamp : String(Date.now()),
+                    start_location: start_location,
+                    end_location: {
+                        "longitude": -2.6520821,
+                        "latitude": 5.67713755
+                    },
+                };
+
+                console.log(feedback);
+
+                feedback = db.feedbacks.put(feedback).then(function(id){
+                        return db.feedbacks.get({id});
+                });
+
+                feedback.then(function(feedback){
+
+                    var form = document.querySelector('form');
+
+                        serializeArray(form,feedback);
+
+                        // Following operation will be queued until we're finished populating data:
+                        db.question_feedbacks.each(function (obj) {
+                            // When we come here, data is fully populated and we can log all objects.
+                            console.log("Found Question Feedback object: " + JSON.stringify(obj));
+                        }).then(function () {
+                            console.log("Finished looping Question Feedback");
+                        })
+                }).catch(function (error) {
+                    // In our each() callback above fails, OR db.open() fails due to any reason,
+                    // the error here!
+                    console.error(error.stack || error);
+                    // Note that we could also have catched it on db.open() but in this sample,
+                    // we show it here.
+                }); 
+
+                // Following operation will be queued until we're finished populating data:
+                db.feedbacks.each(function (obj) {
+                    // When we come here, data is fully populated and we can log all objects.
+                    //console.log("Found Feedback object: " + JSON.stringify(obj));
+                }).then(function () {
+                    console.log("Finished.");
+                }).catch(function (error) {
+                    // In our each() callback above fails, OR db.open() fails due to any reason,
+                    // the error here!
+                    console.error(error.stack || error);
+                    // Note that we could also have catched it on db.open() but in this sample,
+                    // we show it here.
+                });               
+
+
+                alert("Successfully saved");
+            });
+
+          </script>
 </html>
